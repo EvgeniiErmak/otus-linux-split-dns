@@ -2,13 +2,14 @@
 - hosts: all
   become: yes
   tasks:
-  # CentOS 7 EOL: mirror.centos.org отключён, переключаем репозитории на vault.centos.org
-  - name: switch yum repos to vault.centos.org
-    shell: |
-      sed -i -e 's/^mirrorlist=/#mirrorlist=/' \
-             -e 's|^#\?baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|' \
-             /etc/yum.repos.d/CentOS-*.repo
-    changed_when: false
+  # CentOS 7 EOL: mirror.centos.org отключён, используем архивные зеркала
+  - name: copy CentOS-Base.repo with vault mirrors
+    copy:
+      src: CentOS-Base.repo
+      dest: /etc/yum.repos.d/CentOS-Base.repo
+      owner: root
+      group: root
+      mode: 0644
 
   # Установка пакетов bind, bind-utils, vim
   - name: install packages
@@ -19,6 +20,10 @@
         - vim
       state: latest
       update_cache: true
+    register: pkgs
+    retries: 5
+    delay: 15
+    until: pkgs is succeeded
 
   # Синхронизация времени через chronyd
   - name: start chronyd
@@ -35,6 +40,34 @@
       owner: root
       group: named
       mode: 0644
+
+# SELinux (задание со *): оставляем Enforcing, разрешаем named писать в /etc/named
+- hosts: ns01,ns02
+  become: yes
+  tasks:
+  # Тип named_zone_t для /etc/named (вместо named_conf_t, в который named писать не может)
+  - name: set SELinux context named_zone_t for /etc/named
+    shell: |
+      semanage fcontext -l -C | grep -q '^/etc/named(/.\*)?.*named_zone_t' && exit 0
+      semanage fcontext -m -t named_zone_t '/etc/named(/.*)?' 2>/dev/null || \
+      semanage fcontext -a -t named_zone_t '/etc/named(/.*)?'
+      echo changed
+    register: fctx
+    changed_when: "'changed' in fctx.stdout"
+
+  - name: restore SELinux context on /etc/named
+    command: restorecon -Rv /etc/named
+    register: rcon
+    changed_when: rcon.stdout != ""
+
+  # Разрешаем named запись в файлы зон (slave-зоны на ns02, журналы ddns на ns01)
+  - name: enable SELinux boolean named_write_master_zones
+    shell: |
+      getsebool named_write_master_zones | grep -q ' on$' && exit 0
+      setsebool -P named_write_master_zones on
+      echo changed
+    register: sebool
+    changed_when: "'changed' in sebool.stdout"
 
 # Настройка хоста ns01
 - hosts: ns01
