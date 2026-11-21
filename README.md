@@ -56,19 +56,19 @@
 
 **Проблема.** SELinux работает в режиме `Enforcing`, файлы зон лежат в `/etc/named`. Тип этого каталога (`etc_t` / `named_conf_t`) процесс `named_t` может только читать. В журнале ns02:
 
-~~
+```
 named: dumping master file: /etc/named/tmp-XrQXfE2HpX: open: permission denied
-~~
+```
 
 Slave-зоны не сохраняются на диск, на мастере не пишутся журналы (`.jnl`) динамической зоны `ddns.lab`.
 
 **Решение:** отдельный play в [playbook.yml](provisioning/playbook.yml) для ns01 и ns02.
 
-~~bash
+```bash
 semanage fcontext -m -t named_zone_t '/etc/named(/.*)?'   # тип для файлов зон
 restorecon -Rv /etc/named
 setsebool -P named_write_master_zones on                  # разрешить named запись в named_zone_t
-~~
+```
 
 **Результат:**
 - `getenforce` показывает `Enforcing`;
@@ -78,12 +78,12 @@ setsebool -P named_write_master_zones on                  # разрешить n
 
 ## Запуск и проверка
 
-~~bash
+```bash
 vagrant up
 vagrant ssh client  -c 'dig +short web1.dns.lab; dig +short web2.dns.lab; dig +short www.newdns.lab'
 vagrant ssh client2 -c 'dig +short web1.dns.lab; dig +short web2.dns.lab; dig +short www.newdns.lab'
 vagrant ssh ns02    -c 'getenforce; sudo ls -lZ /etc/named/'
-~~
+```
 
 Результат (одинаково через ns01 и ns02):
 
